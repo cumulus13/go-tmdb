@@ -1530,6 +1530,8 @@ func printHelp() {
   Get a free key at: https://www.themoviedb.org/settings/api
 
 %s
+  moviedb                   ← no args: launches interactive mode (REPL)
+  moviedb interactive       ← same, explicit
   moviedb search    <query> [-t movie|tv|person] [-l N] [-y year]
   moviedb movie     <id>    [--export json|yaml|toml] [--lang xx-XX] [--region XX]
   moviedb tv        <id>    [--export json|yaml|toml] [--lang xx-XX] [--region XX]
@@ -1542,6 +1544,9 @@ func printHelp() {
   moviedb videos    <movie|tv> <id>  [--export json|yaml|toml]
   moviedb reviews   <movie|tv> <id>  [--page N]
   moviedb trending  [-t movie|tv|all] [-w day|week] [--export json|yaml|toml]
+  moviedb export                      ← interactive export wizard
+
+  %s  Running any command without required args on a TTY will prompt for them.
 
 %s
   moviedb search "Dune" -t movie -l 10
@@ -1570,6 +1575,7 @@ func printHelp() {
 `,
 		c(bold, "SETUP:"),
 		c(bold, "COMMANDS:"),
+		c(dim, "Note:"),
 		c(bold, "EXAMPLES:"),
 		c(bold, "GLOBAL FLAGS:"))
 }
@@ -1580,43 +1586,124 @@ func main() {
 	apiKey := os.Getenv("TMDB_API_KEY")
 	args := os.Args[1:]
 
-	if len(args) == 0 { printHelp(); return }
+	// No args and stdin is a TTY → enter interactive mode
+	if len(args) == 0 {
+		if isTTY() {
+			requireAPIKey(apiKey)
+			runInteractive(apiKey)
+			return
+		}
+		printHelp()
+		return
+	}
 
 	cmd := args[0]
 	rest := args[1:]
 
-	if cmd == "help" || cmd == "--help" || cmd == "-h" { printHelp(); return }
-
-	if apiKey == "" {
-		fmt.Println(c(red, "\n  ✗ TMDB_API_KEY not set."))
-		fmt.Println("  Windows: set TMDB_API_KEY=your_key_here")
-		fmt.Println("  Linux:   export TMDB_API_KEY=your_key_here")
-		fmt.Println("  Get key: https://www.themoviedb.org/settings/api\n")
-		os.Exit(1)
+	switch cmd {
+	case "help", "--help", "-h":
+		printHelp()
+		return
+	case "interactive", "i", "repl":
+		requireAPIKey(apiKey)
+		runInteractive(apiKey)
+		return
 	}
 
+	requireAPIKey(apiKey)
+
+	// For commands that take a required ID/query, prompt if missing and on a TTY
 	var err error
 	switch cmd {
-	case "search":
-		err = cmdSearch(apiKey, rest)
-	case "movie":
-		err = cmdMovie(apiKey, rest)
-	case "tv":
-		err = cmdTV(apiKey, rest)
+	case "search", "s", "find":
+		if len(rest) == 0 && isTTY() {
+			s := newSession(apiKey)
+			s.screenSearch(nil)
+		} else {
+			err = cmdSearch(apiKey, rest)
+		}
+
+	case "movie", "m":
+		if len(rest) == 0 && isTTY() {
+			s := newSession(apiKey)
+			s.screenMediaEntry("movie", nil)
+		} else {
+			err = cmdMovie(apiKey, rest)
+		}
+
+	case "tv", "show":
+		if len(rest) == 0 && isTTY() {
+			s := newSession(apiKey)
+			s.screenMediaEntry("tv", nil)
+		} else {
+			err = cmdTV(apiKey, rest)
+		}
+
 	case "season":
-		err = cmdSeason(apiKey, rest)
-	case "person":
-		err = cmdPerson(apiKey, rest)
-	case "images":
-		err = cmdImages(apiKey, rest)
-	case "download":
-		err = cmdDownload(apiKey, rest)
-	case "videos":
-		err = cmdVideos(apiKey, rest)
-	case "reviews":
-		err = cmdReviews(apiKey, rest)
-	case "trending":
-		err = cmdTrending(apiKey, rest)
+		if len(rest) < 2 && isTTY() {
+			s := newSession(apiKey)
+			s.screenSeason(rest)
+		} else {
+			err = cmdSeason(apiKey, rest)
+		}
+
+	case "person", "p":
+		if len(rest) == 0 && isTTY() {
+			s := newSession(apiKey)
+			s.screenMediaEntry("person", nil)
+		} else {
+			err = cmdPerson(apiKey, rest)
+		}
+
+	case "images", "img":
+		if len(rest) < 2 && isTTY() {
+			s := newSession(apiKey)
+			s.screenImages(rest)
+		} else {
+			err = cmdImages(apiKey, rest)
+		}
+
+	case "download", "dl":
+		if len(rest) < 2 && isTTY() {
+			s := newSession(apiKey)
+			s.screenDownload(rest)
+		} else {
+			err = cmdDownload(apiKey, rest)
+		}
+
+	case "videos", "v":
+		if len(rest) < 2 && isTTY() {
+			s := newSession(apiKey)
+			s.screenVideos(rest)
+		} else {
+			err = cmdVideos(apiKey, rest)
+		}
+
+	case "reviews", "r":
+		if len(rest) < 2 && isTTY() {
+			s := newSession(apiKey)
+			s.screenReviews(rest)
+		} else {
+			err = cmdReviews(apiKey, rest)
+		}
+
+	case "trending", "hot":
+		if len(rest) == 0 && isTTY() {
+			s := newSession(apiKey)
+			s.screenTrending(nil)
+		} else {
+			err = cmdTrending(apiKey, rest)
+		}
+
+	case "export", "e":
+		if isTTY() {
+			s := newSession(apiKey)
+			s.screenExportWizard()
+		} else {
+			fmt.Println(c(red, "\n  ✗ Export wizard requires an interactive terminal.\n"))
+			os.Exit(1)
+		}
+
 	default:
 		fmt.Printf(c(red, "\n  ✗ Unknown command: %s\n\n"), cmd)
 		printHelp()
@@ -1625,6 +1712,16 @@ func main() {
 
 	if err != nil {
 		fmt.Println(c(red, "\n  ✗ Error: "+err.Error()+"\n"))
+		os.Exit(1)
+	}
+}
+
+func requireAPIKey(apiKey string) {
+	if apiKey == "" {
+		fmt.Println(c(red, "\n  ✗ TMDB_API_KEY not set."))
+		fmt.Println("  Windows: set TMDB_API_KEY=your_key_here")
+		fmt.Println("  Linux:   export TMDB_API_KEY=your_key_here")
+		fmt.Println("  Get key: https://www.themoviedb.org/settings/api\n")
 		os.Exit(1)
 	}
 }

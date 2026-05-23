@@ -17,3 +17,5 @@ __pycache__/
 *.log
 moviedb
 moviedb.exe
+# PT backup directory
+.pt/
